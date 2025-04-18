@@ -1,4 +1,5 @@
 use bit_field::BitField;
+use log::debug;
 use core::{
     convert::TryFrom,
     fmt::{self, Debug, Formatter},
@@ -42,6 +43,7 @@ pub struct StatusRegister(u16);
 
 impl StatusRegister {
     pub fn new(value: u16) -> Self {
+        debug!("new StatusRegister");
         StatusRegister(value)
     }
 

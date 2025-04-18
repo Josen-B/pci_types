@@ -3,7 +3,7 @@
 pub mod capability;
 pub mod device_type;
 mod register;
-
+use log::{info, debug};
 pub use register::{CommandRegister, DevselTiming, StatusRegister};
 
 use crate::capability::CapabilityIterator;
@@ -48,6 +48,22 @@ impl PciAddress {
     pub fn function(&self) -> u8 {
         self.0.get_bits(0..3) as u8
     }
+
+    pub fn pci_bus(&self) -> u8 {
+        ((self.0 >> 16) & 0xff) as u8
+    }
+
+    // 获取 PCI 设备号
+    pub fn pci_dev(&self) -> u8 {
+        ((self.0 >> 11) & 0x1f) as u8
+    }
+
+    // 获取 PCI 功能号
+    pub fn pci_func(&self) -> u8 {
+        ((self.0 >> 8) & 0x7) as u8
+    }
+
+
 }
 
 impl fmt::Display for PciAddress {
@@ -82,6 +98,8 @@ pub trait ConfigRegionAccess {
     /// `address` and `offset` must be valid for PCI reads.
     unsafe fn read(&self, address: PciAddress, offset: u16) -> u32;
 
+    unsafe fn read3(&self, address: PciAddress, offset: u32) -> u32;
+
     /// Performs a PCI write at `address` with `offset`.
     ///
     /// # Safety
@@ -94,6 +112,11 @@ impl<T: ConfigRegionAccess + ?Sized> ConfigRegionAccess for &T {
     #[inline]
     unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
         (**self).read(address, offset)
+    }
+
+    #[inline]
+    unsafe fn read3(&self, address: PciAddress, offset: u32) -> u32 {
+        (**self).read3(address, offset)
     }
 
     #[inline]
@@ -144,7 +167,9 @@ impl PciHeader {
     }
 
     pub fn id(&self, access: impl ConfigRegionAccess) -> (VendorId, DeviceId) {
-        let id = unsafe { access.read(self.0, 0x00) };
+        debug!("id");
+
+        let id = unsafe { access.read3(self.0, 0x00 as u32) };
         (id.get_bits(0..16) as VendorId, id.get_bits(16..32) as DeviceId)
     }
 
@@ -153,7 +178,7 @@ impl PciHeader {
          * Read bits 0..=6 of the Header Type. Bit 7 dictates whether the device has multiple functions and so
          * isn't returned here.
          */
-        match unsafe { access.read(self.0, 0x0c) }.get_bits(16..23) {
+        match unsafe { access.read3(self.0, 0x0c) }.get_bits(16..23) {
             0x00 => HeaderType::Endpoint,
             0x01 => HeaderType::PciPciBridge,
             0x02 => HeaderType::CardBusBridge,
@@ -165,14 +190,14 @@ impl PciHeader {
         /*
          * Reads bit 7 of the Header Type, which is 1 if the device has multiple functions.
          */
-        unsafe { access.read(self.0, 0x0c) }.get_bit(23)
+        unsafe { access.read3(self.0, 0x0c) }.get_bit(23)
     }
 
     pub fn revision_and_class(
         &self,
         access: impl ConfigRegionAccess,
     ) -> (DeviceRevision, BaseClass, SubClass, Interface) {
-        let field = unsafe { access.read(self.0, 0x08) };
+        let field = unsafe { access.read3(self.0, 0x08) };
         (
             field.get_bits(0..8) as DeviceRevision,
             field.get_bits(24..32) as BaseClass,
@@ -187,7 +212,7 @@ impl PciHeader {
     }
 
     pub fn command(&self, access: impl ConfigRegionAccess) -> CommandRegister {
-        let data = unsafe { access.read(self.0, 0x4).get_bits(0..16) };
+        let data = unsafe { access.read3(self.0, 0x4).get_bits(0..16) };
         CommandRegister::from_bits_retain(data as u16)
     }
 
@@ -195,7 +220,7 @@ impl PciHeader {
     where
         F: FnOnce(CommandRegister) -> CommandRegister,
     {
-        let mut data = unsafe { access.read(self.0, 0x4) };
+        let mut data = unsafe { access.read3(self.0, 0x4) };
         let new_command = f(CommandRegister::from_bits_retain(data.get_bits(0..16) as u16));
         data.set_bits(0..16, new_command.bits() as u32);
         unsafe {
